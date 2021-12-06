@@ -22,6 +22,7 @@
 #include <sys/time.h>
 #include <libgen.h>
 #include <limits.h>
+#include <bool.h>
 
 #include "block.h"
 #include "tfs.h"
@@ -30,6 +31,7 @@ char diskfile_path[PATH_MAX];
 
 // Declare your in-memory data structures here
 struct superblock* superBlock;
+int inodesPerBlock;
 
 
 int get_avail_blkno_or_ino(int block_num, int max_num) {
@@ -57,6 +59,33 @@ int get_avail_blkno_or_ino(int block_num, int max_num) {
 	return available_no;
 }
 
+int readi_or_writei(bool read, uint16_t ino, struct inode *inode) {
+	int ret = 0;
+	
+	// Step 1: Get the on-disk block number
+  	int block_num = superBlock->i_start_blk + (ino / inodesPerBlock);
+  	void* block = malloc(BLOCK_SIZE);
+
+	// Step 2: Get offset of the inode in the inode on-disk block
+	int offset = (ino % inodesPerBlock) * sizeof(struct inode);
+
+	// Step 3: Read or write
+	ret = bio_read(block_num, block);
+	if(read) {
+		struct inode* inode_ptr = (struct inode*) malloc(sizeof(struct inode));
+		memcpy(inode_ptr, block + offset, sizeof(struct inode));
+		*inode =* inode_ptr;
+		free(block);
+	}
+	else { // write
+		struct inode* inode_address = (struct inode*)(block+offset);
+		*inode_address =* inode;
+		ret = bio_write(block_num, block);
+	}
+
+	return ret;
+}
+
 
 /* 
  * Get available inode number from bitmap
@@ -76,27 +105,12 @@ int get_avail_blkno() {
  * inode operations
  */
 int readi(uint16_t ino, struct inode *inode) {
-
-  // Step 1: Get the inode's on-disk block number
-
-  // Step 2: Get offset of the inode in the inode on-disk block
-
-  // Step 3: Read the block from disk and then copy into inode structure
-
-	return 0;
+	return readi_or_writei(true, ino, inode);
 }
 
 int writei(uint16_t ino, struct inode *inode) {
-
-	// Step 1: Get the block number where this inode resides on disk
-	
-	// Step 2: Get the offset in the block where this inode resides on disk
-
-	// Step 3: Write inode to disk 
-
-	return 0;
+	return readi_or_writei(false, ino, inode);
 }
-
 
 /* 
  * directory operations
