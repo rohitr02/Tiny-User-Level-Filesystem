@@ -32,46 +32,46 @@ char diskfile_path[PATH_MAX];
 struct superblock* superBlock;
 
 
-/* 
- * Get available inode number from bitmap
- */
-int get_avail_ino() {
-	int available_ino = -1;
-	bitmap_t inode_bitmap = malloc(BLOCK_SIZE);
+int get_avail_blkno_or_ino(int block_num, int max_num) {
+	int available_no = -1;
+	bitmap_t bitMap = malloc(BLOCK_SIZE);
 
-	// Step 1: Read inode bitmap from disk
-	bio_read(1, inode_bitmap);
+	// Step 1: Read data block bitmap from disk
+	bio_read(block_num, bitMap);
 	
-	// Step 2: Traverse inode bitmap to find an available slot
-	for(int i = 0; i < superBlock->max_inum; i++) {
-		if(get_bitmap(inode_bitmap,i) == 0) {
-			available_ino = i;
+	// Step 2: Traverse data block bitmap to find an available slot
+	for(int i = 0; i < max_num; i++) {
+		if(get_bitmap(bitMap,i) == 0) {
+			available_no = i;
 			break;
 		}
 	}
 
-	// Step 3: Update inode bitmap and write to disk 
-	if(available_ino != -1) {
-		set_bitmap(inode_bitmap, available_ino);
-		bio_write(1, inode_bitmap);
+	// Step 3: Update data block bitmap and write to disk 
+	if(available_no != -1) {
+		set_bitmap(bitMap, available_no);
+		bio_write(block_num, bitMap);
 	}
 
-	free(inode_bitmap);
-	return available_ino;
+	free(bitMap);
+	return available_no;
+
+	return 0;
+}
+
+
+/* 
+ * Get available inode number from bitmap
+ */
+int get_avail_ino() {
+	return get_avail_blkno_or_ino(1, superBlock->max_inum);
 }
 
 /* 
  * Get available data block number from bitmap
  */
 int get_avail_blkno() {
-
-	// Step 1: Read data block bitmap from disk
-	
-	// Step 2: Traverse data block bitmap to find an available slot
-
-	// Step 3: Update data block bitmap and write to disk 
-
-	return 0;
+	return get_avail_blkno_or_ino(2, superBlock->max_dnum);
 }
 
 /* 
