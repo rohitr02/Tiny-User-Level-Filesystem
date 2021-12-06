@@ -29,19 +29,35 @@
 char diskfile_path[PATH_MAX];
 
 // Declare your in-memory data structures here
+struct superblock* superBlock;
+
 
 /* 
  * Get available inode number from bitmap
  */
 int get_avail_ino() {
+	int available_ino = -1;
+	bitmap_t inode_bitmap = malloc(BLOCK_SIZE);
 
 	// Step 1: Read inode bitmap from disk
+	bio_read(1, inode_bitmap);
 	
 	// Step 2: Traverse inode bitmap to find an available slot
+	for(int i = 0; i < superBlock->max_inum; i++) {
+		if(get_bitmap(inode_bitmap,i) == 0) {
+			available_ino = i;
+			break;
+		}
+	}
 
 	// Step 3: Update inode bitmap and write to disk 
+	if(available_ino != -1) {
+		set_bitmap(inode_bitmap, available_ino);
+		bio_write(1, inode_bitmap);
+	}
 
-	return 0;
+	free(inode_bitmap);
+	return available_ino;
 }
 
 /* 
