@@ -55,8 +55,6 @@ int get_avail_blkno_or_ino(int block_num, int max_num) {
 
 	free(bitMap);
 	return available_no;
-
-	return 0;
 }
 
 
