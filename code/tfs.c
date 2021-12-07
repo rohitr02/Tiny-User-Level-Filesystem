@@ -196,7 +196,7 @@ static int tfs_opendir_or_tfs_open(bool dir, const char *path, struct fuse_file_
 	// Step 2: If not find, return -1
 	if(found < 0 || (!dir && !inode->valid)) ret = -1;
 
-
+	if(!dir && ret != -1) inode->link++;
 	free(inode);
     return return ret;
 }
