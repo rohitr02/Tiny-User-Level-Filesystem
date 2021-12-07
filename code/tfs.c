@@ -8,7 +8,7 @@
  *	Date:	April 2019
  *
  */
-
+#define FUSE_USE_VERSION 26
 
 #include <fuse.h>
 #include <stdlib.h>
@@ -25,8 +25,6 @@
 
 #include "block.h"
 #include "tfs.h"
-
-#define FUSE_USE_VERSION 26
 
 char diskfile_path[PATH_MAX];
 
