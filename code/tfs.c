@@ -9,7 +9,6 @@
  *
  */
 
-#define FUSE_USE_VERSION 26
 
 #include <fuse.h>
 #include <stdlib.h>
@@ -22,10 +21,12 @@
 #include <sys/time.h>
 #include <libgen.h>
 #include <limits.h>
-#include <bool.h>
+#include <stdbool.h>
 
 #include "block.h"
 #include "tfs.h"
+
+#define FUSE_USE_VERSION 26
 
 char diskfile_path[PATH_MAX];
 
@@ -59,6 +60,20 @@ int get_avail_blkno_or_ino(int block_num, int max_num) {
 	return available_no;
 }
 
+/* 
+ * Get available inode number from bitmap
+ */
+int get_avail_ino() {
+	return get_avail_blkno_or_ino(1, superBlock->max_inum);
+}
+
+/* 
+ * Get available data block number from bitmap
+ */
+int get_avail_blkno() {
+	return get_avail_blkno_or_ino(2, superBlock->max_dnum);
+}
+
 int readi_or_writei(bool read, uint16_t ino, struct inode *inode) {
 	int ret = 0;
 	
@@ -84,21 +99,6 @@ int readi_or_writei(bool read, uint16_t ino, struct inode *inode) {
 	}
 
 	return ret;
-}
-
-
-/* 
- * Get available inode number from bitmap
- */
-int get_avail_ino() {
-	return get_avail_blkno_or_ino(1, superBlock->max_inum);
-}
-
-/* 
- * Get available data block number from bitmap
- */
-int get_avail_blkno() {
-	return get_avail_blkno_or_ino(2, superBlock->max_dnum);
 }
 
 /* 
@@ -166,6 +166,22 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 	return 0;
 }
 
+static int tfs_opendir_or_tfs_open(bool dir, const char *path, struct fuse_file_info *fi) {
+	int ret = 0;
+
+	// Step 1: Call get_node_by_path() to get inode from path
+	struct inode* inode = malloc(BLOCK_SIZE);
+	int found = get_node_by_path(path, 0, inode);
+
+	// Step 2: If not find, return -1
+	if(found < 0 || (!dir && !inode->valid)) ret = -1;
+
+	if(!dir && ret != -1) inode->link++;
+
+	free(inode);
+    return ret;
+}
+
 /* 
  * Make file system
  */
@@ -184,21 +200,6 @@ int tfs_mkfs() {
 	// update inode for root directory
 
 	return 0;
-}
-
-static int tfs_opendir_or_tfs_open(bool dir, const char *path, struct fuse_file_info *fi) {
-	int ret = 0;
-
-	// Step 1: Call get_node_by_path() to get inode from path
-	struct inode* inode = malloc(BLOCK_SIZE);
-	int found = get_node_by_path(path,0,inode);
-
-	// Step 2: If not find, return -1
-	if(found < 0 || (!dir && !inode->valid)) ret = -1;
-
-	if(!dir && ret != -1) inode->link++;
-	free(inode);
-    return return ret;
 }
 
 /* 
@@ -227,10 +228,6 @@ static int tfs_getattr(const char *path, struct stat *stbuf) {
 	// Step 1: call get_node_by_path() to get inode from path
 
 	// Step 2: fill attribute of file into stbuf from inode
-
-		stbuf->st_mode   = S_IFDIR | 0755;
-		stbuf->st_nlink  = 2;
-		time(&stbuf->st_mtime);
 
 	return 0;
 }
@@ -308,7 +305,7 @@ static int tfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 }
 
 static int tfs_open(const char *path, struct fuse_file_info *fi) {
-	return return tfs_opendir_or_tfs_open(false, path, fi);
+	return tfs_opendir_or_tfs_open(false, path, fi);
 }
 
 static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
