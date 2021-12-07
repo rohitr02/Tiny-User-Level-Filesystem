@@ -31,6 +31,7 @@ char diskfile_path[PATH_MAX];
 // Declare your in-memory data structures here
 struct superblock* superBlock;
 int inodesPerBlock;
+int entries_per_dblock;
 
 
 int get_avail_blkno_or_ino(int block_num, int max_num) {
@@ -114,15 +115,51 @@ int writei(uint16_t ino, struct inode *inode) {
  * directory operations
  */
 int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *dirent) {
+	int ret = -1;
+	bool matchFound = false;
+	struct dirent* entry;
 
-  // Step 1: Call readi() to get the inode using ino (inode number of current directory)
+	// Step 1: Call readi() to get the inode using ino (inode number of current directory)
+	struct inode* directory_inode = malloc(sizeof(struct inode));
+	int inode = readi(ino, directory_inode);
+	if(inode < 0) return inode;
 
-  // Step 2: Get data block of current directory from inode
+	// Step 2: Get data block of current directory from inode
+	int* directory_data = directory_inode->direct_ptr;
 
-  // Step 3: Read directory's data block and check each directory entry.
-  //If the name matches, then copy directory entry to dirent structure
+	// Step 3: Read directory's data block and check each directory entry.
+	struct dirent* data_block = calloc(1,BLOCK_SIZE);
+	int block_index = -1;
 
-	return 0;
+	for(int i = 0; i < 16; i++) {
+		if(directory_data[i] == -1) continue;
+
+		bio_read(superBlock->d_start_blk + directory_data[i], data_block);
+
+		for(int j = 0; j < entries_per_dblock; j++) {
+			struct dirent* temp = data_block + j;
+			if(temp == NULL || temp->valid == 0) continue;
+
+			if(strcmp(temp->name,fname) == 0) {
+				matchFound = true;
+				block_index = j;
+				entry = temp;
+				break;
+			}
+		}
+
+		if(matchFound) break;
+	}
+	
+	//If the name matches, then copy directory entry to dirent structure
+	if(matchFound) {
+		ret = directory_data[block_index];
+		*dirent =* entry;
+	}
+
+  	free(directory_inode);
+	free(data_block);
+	return ret;
 }
 
 int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t name_len) {
