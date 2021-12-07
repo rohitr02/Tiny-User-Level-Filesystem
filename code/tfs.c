@@ -186,6 +186,20 @@ int tfs_mkfs() {
 	return 0;
 }
 
+static int tfs_opendir_or_tfs_open(bool dir, const char *path, struct fuse_file_info *fi) {
+	int ret = 0;
+
+	// Step 1: Call get_node_by_path() to get inode from path
+	struct inode* inode = malloc(BLOCK_SIZE);
+	int found = get_node_by_path(path,0,inode);
+
+	// Step 2: If not find, return -1
+	if(found < 0 || (!dir && !inode->valid)) ret = -1;
+
+
+	free(inode);
+    return return ret;
+}
 
 /* 
  * FUSE file operations
@@ -222,12 +236,7 @@ static int tfs_getattr(const char *path, struct stat *stbuf) {
 }
 
 static int tfs_opendir(const char *path, struct fuse_file_info *fi) {
-
-	// Step 1: Call get_node_by_path() to get inode from path
-
-	// Step 2: If not find, return -1
-
-    return 0;
+	return tfs_opendir_or_tfs_open(true, path, fi);
 }
 
 static int tfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
@@ -299,12 +308,7 @@ static int tfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 }
 
 static int tfs_open(const char *path, struct fuse_file_info *fi) {
-
-	// Step 1: Call get_node_by_path() to get inode from path
-
-	// Step 2: If not find, return -1
-
-	return 0;
+	return return tfs_opendir_or_tfs_open(false, path, fi);
 }
 
 static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
