@@ -26,10 +26,6 @@
 #include "block.h"
 #include "tfs.h"
 
-#define INODE_BITMAP 1
-#define DATA_BITMAP 2
-#define INODE_TABLE 3
-
 char diskfile_path[PATH_MAX];
 
 // Declare your in-memory data structures here
@@ -197,64 +193,54 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 
 
 
-
-
-
-
-
-
-
-
-/*
-
-[][][][][][][][][][][][][][][]
-[][]][][][][][][][[][][][][][][][]] 
-
-*/
-// GO THROUGH THIS ONE AGAIN, STILL NEEDS MORE TRANSLATION
 int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
 
 	struct dirent *remove = malloc(sizeof(struct dirent)); //*********** FLAG
 	int data_block_num = dir_find(dir_inode.ino, fname, name_len, remove);
 	if(data_block_num < 0 || remove->valid == 0) return data_block_num;
 	
-	struct dirent* data_block = malloc(BLOCK_SIZE); //*********** FLAG
-	bio_read(superBlock->d_start_blk + data_block_num, data_block);
+	struct dirent* block = malloc(BLOCK_SIZE); //*********** FLAG
+	bio_read(superBlock->d_start_blk + data_block_num, block);
 	
 	bool valid_entries = false;
 	
 	for(int i = 0; i < entries_per_dblock; i++){
-		struct dirent* current_dir = data_block + i;
-		
+		struct dirent* current_dir = block + i;
 		if(current_dir->ino == remove->ino) current_dir->valid = 0;
 		else if(current_dir->valid && !valid_entries) valid_entries = true;
 	}
 
-	bio_write(superBlock->d_start_blk + data_block_num, data_block);
-	
-	free(data_block);
+	bio_write(superBlock->d_start_blk + data_block_num, block);
+	free(block);
 	if(!valid_entries) return 0;
 
+	bool remove = false;
+	struct inode* parent_inode;
+	bitmap_t data_bitmap;
+	int ptr;
+
 	for(int i = 0; i < 16; i++){
-		
-		//search for the pointer to the data block, so we can remove it
 		if(dir_inode.direct_ptr[i] == data_block_num){
-			
-
-			struct inode* parent_inode = malloc(sizeof(struct inode));
-			readi(dir_inode.ino, parent_inode);
-			parent_inode->direct_ptr[i]--;
-			writei(dir_inode.ino,parent_inode);
-
-			bitmap_t data_bitmap = malloc(BLOCK_SIZE);
-			//bio_read(DATA_BITMAP_BLOCK, data_bitmap);
-			unset_bitmap(data_bitmap, dir_inode.ino);
-			bio_write(DATA_BITMAP, data_bitmap);
-
-			free(parent_inode);
-			free(data_bitmap);
-			break;
+			remove = true;
+			parent_inode = malloc(sizeof(struct inode));
+			data_bitmap = malloc(BLOCK_SIZE);
+			ptr = i;
 		}
+
+		if(remove) break;
+	}
+
+	if(remove) {
+		readi(dir_inode.ino, parent_inode);
+		parent_inode->direct_ptr[ptr]--;
+		writei(dir_inode.ino,parent_inode);
+
+		bio_read(DATA_BITMAP, data_bitmap);
+		unset_bitmap(data_bitmap, dir_inode.ino);
+		bio_write(DATA_BITMAP, data_bitmap);
+
+		free(parent_inode);
+		free(data_bitmap);
 	}
 
 	return 0;
