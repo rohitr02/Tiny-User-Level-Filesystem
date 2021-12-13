@@ -12,6 +12,7 @@
 #include <linux/limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <math.h>
 
 #ifndef _TFS_H
 #define _TFS_H
@@ -19,6 +20,11 @@
 #define MAGIC_NUM 0x5C3A
 #define MAX_INUM 1024
 #define MAX_DNUM 16384
+
+#define INODE_BITMAP_BLOCK 1
+#define DATA_BITMAP_BLOCK 2
+
+typedef enum _TFS_TYPE{TFS_DIRECTORY=1,TFS_FILE=2}TFS_TYPE;
 
 
 struct superblock {
@@ -65,5 +71,15 @@ void unset_bitmap(bitmap_t b, int i) {
 uint8_t get_bitmap(bitmap_t b, int i) {
     return b[i / 8] & (1 << (i & 7)) ? 1 : 0;
 }
+
+
+//functions
+int readi(uint16_t, struct inode *);
+int writei(uint16_t, struct inode *);
+struct inode* getInode(int);
+void initialize_file_inode(struct inode* );
+void initialize_dir_inode(struct inode* );
+void free_tfsdir_vars(char* dir_path, char* sub_dir_path, struct inode* par_inode, struct inode* sub_dir_inode, bitmap_t inode_bitmap);
+
 
 #endif

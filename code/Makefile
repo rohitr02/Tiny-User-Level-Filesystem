@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-g -Wall -D_FILE_OFFSET_BITS=64
-LDFLAGS=-lfuse
+LDFLAGS=-lfuse -lm
 
 OBJ=tfs.o block.o
 
