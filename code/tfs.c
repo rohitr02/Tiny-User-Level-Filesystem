@@ -246,22 +246,6 @@ int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
 	return 0;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* 
  * namei operation
  */
@@ -393,18 +377,6 @@ static int tfs_opendir_or_tfs_open(bool dir, const char *path, struct fuse_file_
     return ret;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 int setup_superblock() {
 	struct superblock* superblock = malloc(sizeof(struct superblock));
 	
@@ -475,15 +447,6 @@ int tfs_mkfs() {
 	writei(0, root_inode);
 	return 0;
 }
-
-
-
-
-
-
-
-
-
 
 /* 
  * FUSE file operations
@@ -608,9 +571,9 @@ static int tfs_mkdir(const char *path, mode_t mode) {
 
 	// Step 5: Update inode for target directory
 	if(get_dir_add < 0){
-		bio_read(INODE_BITMAP_BLOCK, inode_bitmap);
+		bio_read(INODE_BITMAP, inode_bitmap);
 		unset_bitmap(inode_bitmap, sub_dir_inode->ino);
-		bio_write(INODE_BITMAP_BLOCK, inode_bitmap);
+		bio_write(INODE_BITMAP, inode_bitmap);
 		free_tfsdir_vars(dir_path, sub_dir_path, par_inode, sub_dir_inode, inode_bitmap);
 		return get_dir_add;
 	}
@@ -649,7 +612,7 @@ static int tfs_rmdir(const char *path) {
 
 	// Step 3: Clear data block bitmap of target directory
 	bitmap_t dblock_bitmap = malloc(BLOCK_SIZE);
-	bio_read(DATA_BITMAP_BLOCK, dblock_bitmap);
+	bio_read(DATA_BITMAP, dblock_bitmap);
 	for(int i = 0; i < 16; i++){
 		if(target_inode->direct_ptr[i] != -1 && get_bitmap(dblock_bitmap, target_inode->direct_ptr[i]) == 1){
 			free_tfsdir_vars(dir_path, sub_dir_path, par_inode, target_inode, inode_bitmap);
@@ -659,9 +622,9 @@ static int tfs_rmdir(const char *path) {
 	}
 
 	// Step 4: Clear inode bitmap and its data block
-	bio_read(INODE_BITMAP_BLOCK, inode_bitmap);
+	bio_read(INODE_BITMAP, inode_bitmap);
 	unset_bitmap(inode_bitmap, target_inode->ino);
-	bio_write(INODE_BITMAP_BLOCK, inode_bitmap);
+	bio_write(INODE_BITMAP, inode_bitmap);
 
 	// Step 5: Call get_node_by_path() to get inode of parent directory
 
@@ -704,9 +667,9 @@ static int tfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 
 	// Step 5: Update inode for target file
 	if(get_dir_add < 0){
-		bio_read(INODE_BITMAP_BLOCK, inode_bitmap);
+		bio_read(INODE_BITMAP, inode_bitmap);
 		unset_bitmap(inode_bitmap, file_inode->ino);
-		bio_write(INODE_BITMAP_BLOCK, inode_bitmap);
+		bio_write(INODE_BITMAP, inode_bitmap);
 		free_tfsdir_vars(dir_path, file_path, par_inode, file_inode, inode_bitmap);
 		return get_dir_add;
 	}
@@ -779,10 +742,10 @@ static int tfs_unlink(const char *path) {
 
 	// Step 3: Clear data block bitmap of target file
 	bitmap_t dblock_bitmap = malloc(BLOCK_SIZE);
-	bio_read(DATA_BITMAP_BLOCK, dblock_bitmap);
+	bio_read(DATA_BITMAP, dblock_bitmap);
 
 	// Step 4: Clear inode bitmap and its data block
-	bio_read(INODE_BITMAP_BLOCK, inode_bitmap);
+	bio_read(INODE_BITMAP, inode_bitmap);
 
 	// Step 5: Call get_node_by_path() to get inode of parent directory
 	int get_par = get_node_by_path(dir_path, 0, par_inode);
@@ -808,9 +771,9 @@ static int tfs_unlink(const char *path) {
 		}
 	}
 
-	bio_write(DATA_BITMAP_BLOCK, dblock_bitmap);
+	bio_write(DATA_BITMAP, dblock_bitmap);
 	unset_bitmap(inode_bitmap, target_inode->ino);
-	bio_write(INODE_BITMAP_BLOCK, inode_bitmap);
+	bio_write(INODE_BITMAP, inode_bitmap);
 
 	// Step 6: Call dir_remove() to remove directory entry of target file in its parent directory
 	dir_remove(*par_inode, file_path, strlen(file_path));
