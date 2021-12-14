@@ -144,7 +144,7 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 
 			if(strcmp(temp->name,fname) == 0) {
 				matchFound = true;
-				block_index = j;
+				block_index = i;
 				entry = temp;
 				break;
 			}
@@ -156,7 +156,7 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 	//If the name matches, then copy directory entry to dirent structure
 	if(matchFound) {
 		ret = directory_data[block_index];
-		*dirent =* entry;
+		*dirent = *entry;
 	}
 
   	free(directory_inode);
@@ -310,11 +310,9 @@ int dir_add(struct inode dir_ino, uint16_t f_ino, const char *fname, size_t name
 	return 0;
 }
 
-
-
 int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
 
-	struct dirent *remove = malloc(sizeof(struct dirent)); //*********** FLAG
+	struct dirent *remove = calloc(1, sizeof(struct dirent)); //*********** FLAG
 	int data_block_num = dir_find(dir_inode.ino, fname, name_len, remove);
 	if(data_block_num < 0 || remove->valid == 0) return data_block_num;
 	
@@ -331,27 +329,27 @@ int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
 
 	bio_write(superBlock->d_start_blk + data_block_num, block);
 	free(block);
-	if(!valid_entries) return 0;
+	if(valid_entries) return 0;
 
-	bool remove = false;
+	bool toRemove = false;
 	struct inode* parent_inode;
 	bitmap_t data_bitmap;
 	int ptr;
 
 	for(int i = 0; i < DIRECT_PTRS; i++){
 		if(dir_inode.direct_ptr[i] == data_block_num){
-			remove = true;
+			toRemove = true;
 			parent_inode = malloc(sizeof(struct inode));
 			data_bitmap = malloc(BLOCK_SIZE);
 			ptr = i;
 		}
 
-		if(remove) break;
+		if(toRemove) break;
 	}
 
-	if(remove) {
+	if(toRemove) {
 		readi(dir_inode.ino, parent_inode);
-		parent_inode->direct_ptr[ptr]--;
+		parent_inode->direct_ptr[ptr] = -1;
 		writei(dir_inode.ino,parent_inode);
 
 		bio_read(DATA_BITMAP, data_bitmap);
