@@ -25,6 +25,7 @@
 #define DATA_BITMAP 2
 #define INODE_TABLE 3
 #define DIRECT_PTRS 16
+#define INDIRECT_PTRS 16
 
 typedef enum _TFS_TYPE{TFS_DIRECTORY=1,TFS_FILE=2}TFS_TYPE;
 

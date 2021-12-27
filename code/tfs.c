@@ -801,39 +801,380 @@ static int tfs_open(const char *path, struct fuse_file_info *fi) {
 	return tfs_opendir_or_tfs_open(false, path, fi);
 }
 
+static void write_and_release(bool write, struct inode* inode, int* direct_data_block, int* indirect_data_block, int* direct_ptr_block) {
 
+	if(write) {
+		time(& (inode->vstat.st_atime));
+		writei(inode->ino,inode);
+	}
+	free(inode);
+	free(direct_data_block);
+	free(indirect_data_block);
+	free(direct_ptr_block);
+}
 
+int read_directs_or_indirects(int blockOffset, int byteOffset, struct inode* inode, int* direct_data_block, int* indirect_data_block, int* direct_ptr_block, char* bufferTail, size_t size, bool direct, int start, int len, bool lastCall) {
+	int bytesRead = 0;
 
+	for(int i =  start; i < len; i++) {
+		if(inode->direct_ptr[i] == -1) continue;
 
+		if(direct) bio_read(superBlock->d_start_blk + inode->direct_ptr[i], direct_data_block);
+		else bio_read(superBlock->d_start_blk + indirect_data_block[i], direct_data_block);
+
+		direct_data_block += byteOffset;
+
+		int bytesToRead = BLOCK_SIZE - byteOffset;
+		int remainingBytes = size - bytesRead;
+		if(bytesToRead < remainingBytes) {
+			memcpy(bufferTail,direct_data_block, bytesToRead);
+			bufferTail += bytesToRead;
+			bytesRead += bytesToRead;
+		}
+		else {
+			memcpy(bufferTail,direct_data_block, remainingBytes);
+			if(!lastCall) bufferTail += remainingBytes;
+			bytesRead += remainingBytes;
+
+			write_and_release(!lastCall, inode, direct_data_block, indirect_data_block, direct_ptr_block);
+			return bytesRead;
+		}
+		
+		byteOffset=0;
+
+	}
+
+	return bytesRead;
+}
 
 
 static int tfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
 
 	// Step 1: You could call get_node_by_path() to get inode from path
+	struct inode* inode = malloc(BLOCK_SIZE);
+	int found_status = get_node_by_path(path, 0, inode);
+	if(found_status<0) return -1;
+	
 
 	// Step 2: Based on size and offset, read its data blocks from disk
+	int bytesRead = 0;
+	int blockOffset = offset / BLOCK_SIZE;
+	int byteOffset = offset % BLOCK_SIZE;
+	int* direct_data_block = malloc(BLOCK_SIZE);
+	int* indirect_data_block = malloc(BLOCK_SIZE);
 
-	// Step 3: copy the correct amount of data from offset to buffer
+	char* bufferTail = buffer;
+	int* direct_ptr_block = malloc(BLOCK_SIZE);
+
+	if(blockOffset < DIRECT_PTRS) {
+		bytesRead += read_directs_or_indirects(blockOffset, byteOffset, inode, direct_data_block, indirect_data_block, direct_ptr_block, bufferTail, size, true, blockOffset, DIRECT_PTRS, false);
+
+		if(bytesRead >= size) {
+			write_and_release(true, inode, direct_data_block, indirect_data_block, direct_ptr_block);
+			return bytesRead;
+		}
+
+		for(int i = 0; i < INDIRECT_PTRS; i++) {
+			if(inode->direct_ptr[i] == -1) continue;
+			bio_read(superBlock->d_start_blk + indirect_data_block[i], indirect_data_block);
+			bytesRead += read_directs_or_indirects(blockOffset, byteOffset, inode, direct_data_block, indirect_data_block, direct_ptr_block, bufferTail, size, false, 0, (BLOCK_SIZE/sizeof(int)), false);
+		}
+	}
+	else {
+		int indirect = offset - 16*BLOCK_SIZE; 
+		int offsetBlocks = indirect/BLOCK_SIZE;
+		int directBlocksPerIndirect = BLOCK_SIZE/sizeof(int);
+		int indirectOffsetBlocks = offsetBlocks/directBlocksPerIndirect;
+		int directBlockOffset = offsetBlocks%directBlocksPerIndirect;
+		byteOffset = indirectOffsetBlocks%BLOCK_SIZE;
+
+		for(int i = indirectOffsetBlocks; i < INDIRECT_PTRS; i++) {
+			if(inode->direct_ptr[i] == -1) continue;
+			bio_read(superBlock->d_start_blk + indirect_data_block[i], indirect_data_block);
+			bytesRead += read_directs_or_indirects(blockOffset, byteOffset, inode, direct_data_block, indirect_data_block, direct_ptr_block, bufferTail, size, false, directBlockOffset, directBlocksPerIndirect, true);
+		}
+	}
 
 	// Note: this function should return the amount of bytes you copied to buffer
-	return 0;
+	return bytesRead;
 }
 
-static int tfs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+int tfs_write_all_ptrs(int offset, struct inode *inode, int *direct_data_block,
+							   size_t size, char *buffer_tail, int *indirect_data_block, int *direct_ptr_block)
+{
+	int num_bytes_written = 0;
+	int num_block_offset = offset / BLOCK_SIZE;
+	int num_byte_offset = offset % BLOCK_SIZE;
+	int direct_ptr_index;
+	int indirect_ptr_index;
+	int prev_unallocated;
+	bitmap_t d_bitmap = malloc(BLOCK_SIZE);
+	bio_read(DATA_BITMAP, d_bitmap);
+
+	for (direct_ptr_index = num_block_offset; direct_ptr_index < DIRECT_PTRS; direct_ptr_index++)
+	{
+		// check if the data block has been initialized
+		if (inode->direct_ptr[direct_ptr_index] != -1 && get_bitmap(d_bitmap, inode->direct_ptr[direct_ptr_index]) == 1)
+		{
+			bio_read(superBlock->d_start_blk + inode->direct_ptr[direct_ptr_index], direct_data_block);
+
+			// if number of bytes to read in the block is less than the desired size remaining
+			if (BLOCK_SIZE - num_byte_offset <= size - num_bytes_written)
+			{
+				memcpy(direct_data_block, buffer_tail, BLOCK_SIZE - num_byte_offset);
+
+				bio_write(superBlock->d_start_blk + inode->direct_ptr[direct_ptr_index], direct_data_block);
+				buffer_tail += BLOCK_SIZE - num_byte_offset;
+				num_bytes_written += BLOCK_SIZE - num_byte_offset;
+				inode->size += BLOCK_SIZE - num_byte_offset;
+			}
+			else if (size - num_bytes_written == 0)
+			{
+				time(&(inode->vstat.st_mtime));
+				writei(inode->ino, inode);
+				free(d_bitmap);
+				return num_bytes_written;
+			}
+			else
+			{
+				memcpy(buffer_tail, direct_data_block, size - num_bytes_written);
+				bio_write(superBlock->d_start_blk + inode->direct_ptr[direct_ptr_index], direct_data_block);
+				inode->size += size - num_bytes_written;
+				num_bytes_written += size - num_bytes_written;
+				time(&(inode->vstat.st_mtime));
+				writei(inode->ino, inode);
+				free(d_bitmap);
+				return num_bytes_written;
+			}
+			num_byte_offset = 0;
+		}
+		// if the data block has not been intialized
+		else
+		{
+			// initialize a data block
+			int new_data_block = get_avail_blkno();
+			inode->direct_ptr[direct_ptr_index] = new_data_block;
+
+			// now that we have initialized, let's write the data
+			bio_read(superBlock->d_start_blk + inode->direct_ptr[direct_ptr_index], direct_data_block);
+			// if number of bytes to read in the block is less than the desired size remaining
+
+			if (BLOCK_SIZE - num_byte_offset <= size - num_bytes_written)
+			{
+				memcpy(direct_data_block, buffer_tail, BLOCK_SIZE - num_byte_offset);
+				// TODO: deal with size
+				bio_write(superBlock->d_start_blk + inode->direct_ptr[direct_ptr_index], direct_data_block);
+				inode->size += BLOCK_SIZE - num_byte_offset;
+				buffer_tail += BLOCK_SIZE - num_byte_offset;
+				num_bytes_written += BLOCK_SIZE - num_byte_offset;
+			}
+			else if (size - num_bytes_written == 0)
+			{
+				time(&(inode->vstat.st_mtime));
+				writei(inode->ino, inode);
+				free(d_bitmap);
+				return num_bytes_written;
+			}
+			else
+			{
+				memcpy(buffer_tail, direct_data_block, size - num_bytes_written);
+				bio_write(superBlock->d_start_blk + inode->direct_ptr[direct_ptr_index], direct_data_block);
+
+				inode->size += size - num_bytes_written;
+				num_bytes_written += size - num_bytes_written;
+
+				time(&(inode->vstat.st_mtime));
+				writei(inode->ino, inode);
+				free(d_bitmap);
+				return num_bytes_written;
+			}
+
+			num_byte_offset = 0;
+		}
+	}
+	// if we have read everything, return;
+	if (num_bytes_written >= size)
+	{
+		// do some freeing
+		time(&(inode->vstat.st_mtime));
+		writei(inode->ino, inode);
+		free(d_bitmap);
+		return num_bytes_written;
+	}
+	// otherwise there is still data to be read, start reading indirect blocks
+	for (indirect_ptr_index = 0; indirect_ptr_index < INDIRECT_PTRS; indirect_ptr_index++)
+	{
+		if (inode->indirect_ptr[indirect_ptr_index] == -1)
+		{
+			// then unallocated
+			inode->indirect_ptr[indirect_ptr_index] = get_avail_blkno();
+			make_direct_ptr_block(superBlock->d_start_blk + inode->indirect_ptr[indirect_ptr_index]); // initialize all direct ptr entries to -1 for now
+		}
+		// read the entire block pointed to by indirect pointer
+		bio_read(superBlock->d_start_blk + inode->indirect_ptr[indirect_ptr_index], indirect_data_block);
+
+		for (direct_ptr_index = 0; direct_ptr_index < BLOCK_SIZE / sizeof(int); direct_ptr_index++)
+		{
+			prev_unallocated = 0;
+			if (indirect_data_block[direct_ptr_index] == -1)
+			{
+				indirect_data_block[direct_ptr_index] = get_avail_blkno();
+				// TODO: check if get_avail_blkno() fails
+				bio_write(superBlock->d_start_blk + inode->indirect_ptr[indirect_ptr_index], indirect_data_block);
+				prev_unallocated = 1;
+			}
+			// read the block pointed to by the direct pointers in the block pointed to by the indirect poointer
+			bio_read(superBlock->d_start_blk + indirect_data_block[direct_ptr_index], direct_data_block);
+
+			// if number of bytes to read in the block is less than the desired size remaining
+			if (BLOCK_SIZE - num_byte_offset < size - num_bytes_written)
+			{
+				memcpy(direct_data_block, buffer_tail, BLOCK_SIZE - num_byte_offset);
+				bio_write(superBlock->d_start_blk + indirect_data_block[direct_ptr_index], direct_data_block);
+				if (prev_unallocated == 1)
+				{
+					inode->size += BLOCK_SIZE - num_byte_offset;
+				}
+				buffer_tail += BLOCK_SIZE - num_byte_offset;
+				num_bytes_written += BLOCK_SIZE - num_byte_offset;
+			}
+			else
+			{
+				memcpy(direct_data_block, buffer_tail, size - num_bytes_written);
+				bio_write(superBlock->d_start_blk + indirect_data_block[direct_ptr_index], direct_data_block);
+				if (prev_unallocated == 1)
+				{
+					inode->size += size - num_bytes_written;
+				}
+				num_bytes_written += size - num_bytes_written;
+				time(&(inode->vstat.st_mtime));
+				writei(inode->ino, inode);
+				free(d_bitmap);
+				return num_bytes_written;
+			}
+			num_byte_offset = 0;
+		}
+	}
+
+	if (size - num_bytes_written > 0)
+	{
+		time(&(inode->vstat.st_mtime));
+		writei(inode->ino, inode);
+		free(d_bitmap);
+		return num_bytes_written;
+	}
+}
+
+int tfs_write_indirect_ptrs(int offset, struct inode *inode, int *indirect_data_block,
+								int *direct_data_block, size_t size, char *buffer_tail)
+{
+	int num_bytes_written = 0;
+	int indirect_offset = offset - DIRECT_PTRS * BLOCK_SIZE; //
+	int num_offset_blks = indirect_offset / BLOCK_SIZE;
+	int num_direct_blks_per_indirect_ptr = BLOCK_SIZE / sizeof(int);
+	int num_indirect_offset_blks = num_offset_blks / num_direct_blks_per_indirect_ptr;
+	int direct_blk_offset = num_offset_blks % num_direct_blks_per_indirect_ptr;
+	int num_byte_offset = indirect_offset % BLOCK_SIZE;
+	int indirect_ptr_index;
+	int direct_ptr_index;
+	int prev_unallocated;
+
+	if (num_indirect_offset_blks >= INDIRECT_PTRS)
+	{
+		return -1;
+	}
+
+	// 16*blocksize + 50*blocksize + 50bytes ==> 16+50 blocks + 50 bytes ==> 50 indirect blocks + 50 bytes ==> 50/num_direct_blks_per_indirect_ptr is the indirect index, then 50%num_direct_blks_per_indirect_ptr is the block index inside that then offset%blocksize gives the byte offset. ==>
+	// otherwise there is still data to be read, start reading indirect blocks
+	for (indirect_ptr_index = num_indirect_offset_blks; indirect_ptr_index < INDIRECT_PTRS; indirect_ptr_index++)
+	{
+		if (inode->indirect_ptr[indirect_ptr_index] == -1)
+		{
+			// then unallocated
+			inode->indirect_ptr[indirect_ptr_index] = get_avail_blkno();
+			make_direct_ptr_block(superBlock->d_start_blk + inode->indirect_ptr[indirect_ptr_index]); // initialize all direct ptr entries to -1 for now
+		}
+		// read the entire block pointed to by indirect pointer
+		bio_read(superBlock->d_start_blk + inode->indirect_ptr[indirect_ptr_index], indirect_data_block);
+		for (direct_ptr_index = direct_blk_offset; direct_ptr_index < num_direct_blks_per_indirect_ptr; direct_ptr_index++)
+		{
+			// initializing a block of allocated direct pointers
+			prev_unallocated = 0;
+			if (indirect_data_block[direct_ptr_index] == -1)
+			{
+				indirect_data_block[direct_ptr_index] = get_avail_blkno();
+				bio_write(superBlock->d_start_blk + inode->indirect_ptr[indirect_ptr_index], indirect_data_block);
+				prev_unallocated = 1;
+			}
+			// read the block pointed to by the direct pointers in the block pointed to by the indirect poointer
+			bio_read(superBlock->d_start_blk + indirect_data_block[direct_ptr_index], direct_data_block);
+
+			// if number of bytes to read in the block is less than the desired size remaining
+			if (BLOCK_SIZE - num_byte_offset < size - num_bytes_written)
+			{
+				memcpy(direct_data_block, buffer_tail, BLOCK_SIZE - num_byte_offset);
+				bio_write(superBlock->d_start_blk + indirect_data_block[direct_ptr_index], direct_data_block);
+				if (prev_unallocated == 1)
+				{
+					inode->size += BLOCK_SIZE - num_byte_offset;
+				}
+				buffer_tail += BLOCK_SIZE - num_byte_offset;
+				num_bytes_written += BLOCK_SIZE - num_byte_offset;
+			}
+			else
+			{
+				memcpy(direct_data_block, buffer_tail, size - num_bytes_written);
+				bio_write(superBlock->d_start_blk + indirect_data_block[direct_ptr_index], direct_data_block);
+				if (prev_unallocated == 1)
+				{
+					inode->size += size - num_bytes_written;
+				}
+				num_bytes_written += size - num_bytes_written;
+				time(&(inode->vstat.st_mtime));
+				writei(inode->ino, inode);
+				return num_bytes_written;
+			}
+			num_byte_offset = 0;
+		}
+	}
+}
+
+static int tfs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi)
+{
 	// Step 1: You could call get_node_by_path() to get inode from path
+	struct inode *inode = malloc(BLOCK_SIZE);
+	// Step 2: If not find, return -1
+	if (get_node_by_path(path, 0, inode) < 0)
+	{
+		return -1;
+	}
 
-	// Step 2: Based on size and offset, read its data blocks from disk
+	int num_bytes_written = 0;
+	int num_block_offset = offset / BLOCK_SIZE;
+	int *direct_data_block = malloc(BLOCK_SIZE);
+	int *indirect_data_block = malloc(BLOCK_SIZE);
+	char *buffer_tail = buffer;
+	int *direct_ptr_block = malloc(BLOCK_SIZE);
 
-	// Step 3: Write the correct amount of data from offset to disk
+	if (num_block_offset < DIRECT_PTRS)
+	{
+		num_bytes_written = tfs_write_all_ptrs(offset, inode, direct_data_block,
+												size, buffer_tail, indirect_data_block, direct_ptr_block);
+	}
+	else
+	{
+		num_bytes_written = tfs_write_indirect_ptrs(offset, inode, indirect_data_block, direct_data_block,
+														size, buffer_tail);
+	}
 
-	// Step 4: Update the inode info and write it to disk
+	free(inode);
+	free(direct_data_block);
+	free(indirect_data_block);
+	free(direct_ptr_block);
 
 	// Note: this function should return the amount of bytes you write to disk
-	return size;
+	return num_bytes_written;
 }
-
-
-
 
 
 static int tfs_unlink(const char *path) {
